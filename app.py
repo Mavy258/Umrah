@@ -26,6 +26,10 @@ app.config["MYSQL_DB"] = os.getenv("railway")  # Database name
 app.config["MYSQL_PORT"] = 48512
 mysql = MySQL(app)
 
+
+app.config['MYSQL_URI'] = os.getenv('DATABASE_URL')
+
+
 # Email Configuration
 EMAIL_ADDRESS = "firozakht143@gmail.com"
 EMAIL_PASSWORD = "okiz qdwa qzar mzci"
