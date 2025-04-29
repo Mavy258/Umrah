@@ -6,33 +6,22 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, session, flash, url_for
 from flask_mysqldb import MySQL
 from flask_session import Session
+from urllib.parse import urlparse
 import MySQLdb.cursors  # Make sure this is imported
-
-
 from dotenv import load_dotenv  # For local development
 
-# Load environment variables
-load_dotenv()  # Load environment variables from .env file for local development
+load_dotenv()
 
-# Flask App Initialization
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "your-secure-secret-key")  # Default secret key for local testing
-
-
-# MySQL Configuration using DATABASE_URL
-app.config["MYSQL_URI"] = os.getenv("DATABASE_URL")
-
 
 # MySQL Configuration
-app.config["MYSQL_HOST"] = os.getenv("MYSQL_HOST", "interchange.proxy.rlwy.net")
-app.config["MYSQL_USER"] = os.getenv("MYSQL_USER", "root")
-app.config["MYSQL_PASSWORD"] = os.getenv("MYSQL_PASSWORD", "OGksydAWMZQmHpmlpOFALHdmbkORJFPv")
-app.config["MYSQL_DB"] = os.getenv("MYSQL_DB", "railway")
-app.config["MYSQL_PORT"] = 48512
+app.config['MYSQL_HOST'] = os.getenv('MYSQL_HOST', 'localhost')
+app.config['MYSQL_USER'] = os.getenv('MYSQL_USER', 'root')
+app.config['MYSQL_PASSWORD'] = os.getenv('MYSQL_PASSWORD', 'Mavia@123')
+app.config['MYSQL_DB'] = os.getenv('MYSQL_DB', 'user_auth')
+
 mysql = MySQL(app)
 
-
-app.config['MYSQL_URI'] = os.getenv('DATABASE_URL')
 
 
 # Email Configuration
@@ -100,13 +89,6 @@ def send_otp(email):
     except smtplib.SMTPException:
         return False
     
-
-
-
-
-
-
-
 @app.route("/send_otp", methods=["POST"])
 def send_otp_route():
     email = request.form.get("email")
