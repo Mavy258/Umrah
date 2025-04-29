@@ -4,14 +4,12 @@ import os
 import smtplib
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, session, flash, url_for
-from flask_mysqldb import MySQL
+import mysql.connector  
 from flask_session import Session
 from urllib.parse import urlparse
-import MySQLdb.cursors  # Make sure this is imported
 from dotenv import load_dotenv  # For local development
 
 load_dotenv()
-
 app = Flask(__name__)
 
 # MySQL Configuration
@@ -21,9 +19,14 @@ app.config['MYSQL_PASSWORD'] = os.getenv('MYSQL_PASSWORD', 'Mavia@123')
 app.config['MYSQL_DB'] = os.getenv('MYSQL_DB', 'user_auth')
 app.config['DEBUG'] = False
 
-mysql = MySQL(app)
-
-
+# Set up a connection to MySQL using mysql.connector
+def get_db_connection():
+    return mysql.connector.connect(
+        host=app.config['MYSQL_HOST'],
+        user=app.config['MYSQL_USER'],
+        password=app.config['MYSQL_PASSWORD'],
+        database=app.config['MYSQL_DB']
+    )
 
 # Email Configuration
 EMAIL_ADDRESS = "firozakht143@gmail.com"
@@ -32,12 +35,13 @@ EMAIL_PASSWORD = "okiz qdwa qzar mzci"
 @app.route("/")
 def index():
     search_query = request.args.get("search", "").strip().lower()
-    cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
-
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    
     # Fetch all agencies
     cursor.execute("SELECT * FROM agencies")
     agencies = cursor.fetchall()
-
+    
     # Apply filtering if there's a search query
     if search_query:
         agencies = [
@@ -46,7 +50,7 @@ def index():
             or search_query in agency["city"].lower() 
             or search_query in agency["country"].lower()
         ]
-
+    
     # Fetch packages for each agency
     for agency in agencies:
         cursor.execute("""
@@ -54,10 +58,10 @@ def index():
         """, (agency["registration_id"],))
         packages = cursor.fetchall()
         agency["packages"] = packages
-
+    
     cursor.close()
+    conn.close()
     return render_template("index.html", agencies=agencies)
-
 
 @app.route("/enter_email")
 def enter_email():
@@ -71,7 +75,6 @@ def send_otp(email):
     """Generate and send OTP to the provided email."""
     if not is_valid_email(email):
         return False
-    
     otp = str(random.randint(100000, 999999))
     session["otp"] = otp
     session["otp_expiry"] = (datetime.now() + timedelta(minutes=5)).timestamp()
@@ -89,7 +92,7 @@ def send_otp(email):
         return True
     except smtplib.SMTPException:
         return False
-    
+
 @app.route("/send_otp", methods=["POST"])
 def send_otp_route():
     email = request.form.get("email")
@@ -117,16 +120,16 @@ def verify_otp():
 
     if entered_otp.strip() == stored_otp.strip():
         try:
-            cursor = mysql.connection.cursor()
-
+            conn = get_db_connection()
+            cursor = conn.cursor()
             # Insert email if not exists
             cursor.execute("INSERT INTO users (email) VALUES (%s) ON DUPLICATE KEY UPDATE email=email", (email,))
-            mysql.connection.commit()
-
+            conn.commit()
             # Check if user details exist
             cursor.execute("SELECT first_name, last_name, personal_email FROM users WHERE email = %s", (email,))
             user_details = cursor.fetchone()
             cursor.close()
+            conn.close()
 
             session["logged_in"] = True
             session.modified = True
@@ -161,13 +164,15 @@ def user_details():
             return render_template("details.html")
 
         try:
-            cursor = mysql.connection.cursor()
+            conn = get_db_connection()
+            cursor = conn.cursor()
             cursor.execute(
                 "UPDATE users SET first_name=%s, last_name=%s, personal_email=%s WHERE email=%s",
                 (first_name, last_name, personal_email, email),
             )
-            mysql.connection.commit()
+            conn.commit()
             cursor.close()
+            conn.close()
 
             return redirect(url_for("business_dashboard"))
 
@@ -177,15 +182,14 @@ def user_details():
 
     return render_template("details.html")
 
-
 @app.route('/business_dashboard')
 def business_dashboard():
     if not session.get("logged_in"):
         return redirect(url_for("enter_email"))
 
     email = session.get("email")
-    cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
-
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
     # Step 1: Get user_id from email
     cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
     user = cursor.fetchone()
@@ -195,11 +199,9 @@ def business_dashboard():
         return redirect(url_for("enter_email"))
 
     user_id = user["id"]
-
     # Step 2: Get all agencies for the user
     cursor.execute("SELECT * FROM agencies WHERE user_id = %s", (user_id,))
     agencies = cursor.fetchall()
-
     # Step 3: Get packages for each agency
     for agency in agencies:
         cursor.execute("""
@@ -211,47 +213,45 @@ def business_dashboard():
         agency['packages'] = packages
 
     cursor.close()
+    conn.close()
     return render_template("business_dashboard.html", agencies=agencies)
-
 
 @app.route("/delete_agency/<int:agency_id>")
 def delete_agency(registration_id):
-    cursor = mysql.connection.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
         cursor.execute("DELETE FROM packages WHERE registration_id = %s", (registration_id,))
         cursor.execute("DELETE FROM agencies WHERE id = %s", (registration_id,))
-        mysql.connection.commit()
+        conn.commit()
         flash("Agency deleted successfully!", "success")
     except Exception as e:
         flash(f"Error deleting agency: {e}", "error")
     finally:
         cursor.close()
+        conn.close()
     return redirect(url_for("business_dashboard"))
-
 
 @app.route("/delete_package/<int:package_id>")
 def delete_package(package_id):
-    cursor = mysql.connection.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
     try:
         cursor.execute("DELETE FROM packages WHERE package_id = %s", (package_id,))
-        mysql.connection.commit()
+        conn.commit()
         flash("Package deleted successfully!", "success")
     except Exception as e:
         flash(f"Error deleting package: {e}", "error")
     finally:
         cursor.close()
+        conn.close()
     return redirect(url_for("business_dashboard"))
-
-
-
 
 @app.route("/logout")
 def logout():
     session.clear()  # clears all session data
     flash("You have been logged out.", "info")
     return redirect(url_for("index"))  # or your home/login page
-
-
 
 @app.route("/add_agency", methods=["GET"])
 def add_agency_page():
@@ -278,91 +278,29 @@ def save_agency():
         return redirect(url_for("add_agency_page"))
 
     try:
-        cursor = mysql.connection.cursor()
-
+        conn = get_db_connection()
+        cursor = conn.cursor()
         # Fetch the user's ID based on email
         cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
         user = cursor.fetchone()
         if not user:
             flash("User not found in the database.", "error")
             return redirect(url_for("enter_email"))
-
         user_id = user[0]
-
         # Insert into agencies table
         sql = """
-        INSERT INTO agencies (agencies_name, user_id, country, city, description) 
+        INSERT INTO agencies (user_id, agencies_name, country, city, description)
         VALUES (%s, %s, %s, %s, %s)
         """
-        values = (agencies_name, user_id, country, city, description)
-        cursor.execute(sql, values)
-        mysql.connection.commit()
+        cursor.execute(sql, (user_id, agencies_name, country, city, description))
+        conn.commit()
         cursor.close()
-
+        conn.close()
         flash("Agency added successfully!", "success")
+        return redirect(url_for("business_dashboard"))
     except Exception as e:
-        flash(f"Database error: {str(e)}", "error")
-
-    return redirect(url_for("business_dashboard"))
-
-
-@app.route('/add_packages_page')
-def add_packages_page():
-    if not session.get("logged_in"):
-        return redirect(url_for("enter_email"))
-
-    email = session.get("email")
-    cursor = mysql.connection.cursor(MySQLdb.cursors.DictCursor)
-
-    # Step 1: Get user ID
-    cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
-    user = cursor.fetchone()
-
-    if not user:
-        flash("User not found!", "error")
-        return redirect(url_for("enter_email"))
-
-    user_id = user["id"]
-
-    # Step 2: Get agencies for this user
-    cursor.execute("SELECT registration_id, agencies_name FROM agencies WHERE user_id = %s", (user_id,))
-    agencies = cursor.fetchall()
-    cursor.close()
-
-    return render_template("add_packages.html", agencies=agencies)
-
-
-
-@app.route("/save_package", methods=["POST"])
-def save_package():
-    if not session.get("logged_in"):
-        flash("Session expired. Please log in again.", "error")
-        return redirect(url_for("enter_email"))
-
-    package_name = request.form.get("package_name")
-    days = request.form.get("days")
-    price = request.form.get("price")
-    description = request.form.get("description")
-    registration_id = request.form.get("registration_id")
-    email = session.get("email")
-
-    try:
-        cursor = mysql.connection.cursor()
-        cursor.execute("""
-            INSERT INTO packages (registration_id, package_name, days, price, description)
-            VALUES ( %s, %s, %s, %s, %s)
-        """, (registration_id , package_name, days, price, description))
-        mysql.connection.commit()
-        cursor.close()
-        flash("Package added successfully!", "success")
-    except Exception as e:
-        flash(f"Database Error: {e}", "error")
-
-    return redirect(url_for("business_dashboard"))
-
-
-
-
+        flash(f"Error adding agency: {e}", "error")
+        return redirect(url_for("add_agency_page"))
 
 
 if __name__ == "__main__":
