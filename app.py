@@ -14,6 +14,12 @@ load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "your-secret-key")
 
+# Session Configuration
+app.config["SESSION_TYPE"] = "filesystem"
+app.config["SESSION_PERMANENT"] = False
+Session(app)
+
+
 # MySQL Configuration
 app.config["MYSQL_HOST"] = os.getenv("MYSQL_HOST")
 app.config["MYSQL_USER"] = os.getenv("MYSQL_USER")
@@ -73,7 +79,7 @@ def enter_email():
     return render_template("email.html")
 
 def is_valid_email(email):
-    regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+    regex = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
     return re.match(regex, email)
 
 def send_otp(email):
@@ -99,14 +105,20 @@ def send_otp(email):
 @app.route("/send_otp", methods=["POST"])
 def send_otp_route():
     email = request.form.get("email")
+    print("Received email from form:", email)
+
     if not email or not is_valid_email(email):
+        print("Invalid email format or empty")
         flash("Invalid email!", "error")
         return redirect(url_for("enter_email"))
+
     if send_otp(email):
+        print("OTP sent, rendering otp.html")
         return render_template("otp.html")
     else:
         flash("Failed to send OTP. Try again!", "error")
         return redirect(url_for("enter_email"))
+
 
 @app.route("/verify_otp", methods=["POST"])
 def verify_otp():
@@ -123,10 +135,14 @@ def verify_otp():
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO users (email) VALUES (%s) ON DUPLICATE KEY UPDATE email=email", (email,))
-            conn.commit()
             cursor.execute("SELECT first_name, last_name, personal_email FROM users WHERE email = %s", (email,))
             user_details = cursor.fetchone()
+
+            if user_details is None:
+                cursor.execute("INSERT INTO users (email) VALUES (%s)", (email,))
+                conn.commit()
+                user_details = (None, None, None)
+
             cursor.close()
             conn.close()
 
@@ -204,8 +220,8 @@ def delete_agency(registration_id):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute("DELETE FROM packages WHERE registration_id = %s", (registration_id,))
         cursor.execute("DELETE FROM agencies WHERE registration_id = %s", (registration_id,))
+        #cursor.execute("DELETE FROM agencies WHERE id = %s", (registration_id,))
         conn.commit()
         flash("Agency deleted successfully!", "success")
     except Exception as e:
@@ -250,7 +266,7 @@ def save_agency():
         return redirect(url_for("enter_email"))
 
     email = session.get("email")
-    agencies_name = request.form.get("agency_name")
+    agencies_name = request.form.get("agency_name")  # matches `agencies_name` in DB
     country = request.form.get("country")
     city = request.form.get("city")
     description = request.form.get("description")
@@ -261,25 +277,100 @@ def save_agency():
 
     try:
         conn = get_db_connection()
-        cursor = conn.cursor()
+        cursor = conn.cursor(dictionary=True)
+
+
+
+        # Fetch the user's ID based on email
         cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
         user = cursor.fetchone()
+        
+
         if not user:
-            flash("User not found in the database.", "error")
+            flash("User not found!", "error")
             return redirect(url_for("enter_email"))
-        user_id = user[0]
-        cursor.execute("""
-            INSERT INTO agencies (user_id, agencies_name, country, city, description)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (user_id, agencies_name, country, city, description))
+
+        user_id = user["id"]  # only executes if user is found
+
+
+        # Insert into agencies table
+        sql = """
+        INSERT INTO agencies (agencies_name, user_id, country, city, description) 
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        values = (agencies_name, user_id, country, city, description)
+        cursor.execute(sql, values)
         conn.commit()
         cursor.close()
         conn.close()
+
         flash("Agency added successfully!", "success")
-        return redirect(url_for("business_dashboard"))
     except Exception as e:
-        flash(f"Error adding agency: {e}", "error")
-        return redirect(url_for("add_agency_page"))
+        #flash(f"Database error: {str(e)}", "error")
+        flash("Something went wrong with the database.", "error")
+
+
+    return redirect(url_for("business_dashboard"))
+
+
+
+@app.route('/add_packages_page')
+def add_packages_page():
+    if not session.get("logged_in"):
+        return redirect(url_for("enter_email"))
+
+    email = session.get("email")
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+
+
+    # Step 1: Get user ID
+    cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+    user = cursor.fetchone()
+
+    if not user:
+        flash("User not found!", "error")
+        return redirect(url_for("enter_email"))
+
+    user_id = user["id"]
+
+    # Step 2: Get agencies for this user
+    cursor.execute("SELECT registration_id, agencies_name FROM agencies WHERE user_id = %s", (user_id,))
+    agencies = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return render_template("add_packages.html", agencies=agencies)
+
+
+@app.route("/save_package", methods=["POST"])
+def save_package():
+    if not session.get("logged_in"):
+        flash("Session expired. Please log in again.", "error")
+        return redirect(url_for("enter_email"))
+
+    package_name = request.form.get("package_name")
+    days = request.form.get("days")
+    price = request.form.get("price")
+    description = request.form.get("description")
+    registration_id = request.form.get("registration_id")
+    email = session.get("email")
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO packages (registration_id, package_name, days, price, description)
+            VALUES ( %s, %s, %s, %s, %s)
+        """, (registration_id , package_name, days, price, description))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        flash("Package added successfully!", "success")
+    except Exception as e:
+        flash(f"Database Error: {e}", "error")
+
+    return redirect(url_for("business_dashboard"))
 
 if __name__ == "__main__":
     port = 5050
